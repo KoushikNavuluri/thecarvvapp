@@ -34,9 +34,13 @@ export function AppProvider({ children }) {
   const [saved, setSaved] = useState("Saved");
   const saveTimer = useRef(null);
   const [hasSession, setHasSession] = useState(false);
+  // True once the session restore attempt has finished, so the splash
+  // screen never routes to onboarding while a valid session is pending.
+  const [sessionChecked, setSessionChecked] = useState(!isConfigured);
 
   /* ---- Appwrite: restore the session, then hydrate + sync the studio ---- */
   const hydratedFor = useRef(null);
+  const readyFor = useRef(null);   // set only after hydration COMPLETED; gates all sync
   const hydrate = useCallback((id) => {
     if (!isConfigured || !id || hydratedFor.current === id) return;
     hydratedFor.current = id;
@@ -47,34 +51,37 @@ export function AppProvider({ children }) {
       if (pf?.brand) setBrand(pf.brand);
       if (pf?.prefs) setPrefs(x => ({ ...x, ...pf.prefs }));
       if (pf?.palette) setPalette(x => ({ ...x, ...pf.palette }));
+      readyFor.current = id;
     });
   }, []);
   useEffect(() => {
     if (!isConfigured) return;
-    getSessionUser().then(u => {
-      if (!u) return;
-      setHasSession(true);
-      setUser({ name:u.name || (u.email ? u.email.split("@")[0] : "Guest"), email:u.email || "guest@carvv.local", plan:"Pro", uid:u.$id });
-    });
+    getSessionUser()
+      .then(u => {
+        if (!u) return;
+        setHasSession(true);
+        setUser({ name:u.name || (u.email ? u.email.split("@")[0] : "Guest"), email:u.email || "guest@carvv.local", plan:"Pro", uid:u.$id });
+      })
+      .finally(() => setSessionChecked(true));
   }, []);
   useEffect(() => { if (user?.uid) hydrate(user.uid); }, [user?.uid, hydrate]);
   const syncTimer = useRef(null);
   useEffect(() => {
     const uid = user?.uid;
-    if (!isConfigured || !uid || hydratedFor.current !== uid) return;
+    if (!isConfigured || !uid || hydratedFor.current !== uid || readyFor.current !== uid) return;
     clearTimeout(syncTimer.current);
     syncTimer.current = setTimeout(() => syncProjects(uid, projects), 1200);
     return () => clearTimeout(syncTimer.current);
   }, [projects, user?.uid]);
   useEffect(() => {
     const uid = user?.uid;
-    if (!isConfigured || !uid || hydratedFor.current !== uid) return;
+    if (!isConfigured || !uid || hydratedFor.current !== uid || readyFor.current !== uid) return;
     const t = setTimeout(() => syncAssets(uid, assets), 1200);
     return () => clearTimeout(t);
   }, [assets, user?.uid]);
   useEffect(() => {
     const uid = user?.uid;
-    if (!isConfigured || !uid || hydratedFor.current !== uid) return;
+    if (!isConfigured || !uid || hydratedFor.current !== uid || readyFor.current !== uid) return;
     const t = setTimeout(() => pushProfile(uid, { brand, prefs, palette }), 1200);
     return () => clearTimeout(t);
   }, [brand, prefs, palette, user?.uid]);
@@ -127,8 +134,8 @@ export function AppProvider({ children }) {
     projects, setProjects, project, addProject, removeProject, commit, undo, redo,
     canUndo: hist.past.length > 0, canRedo: hist.future.length > 0, histLen: hist.past.length,
     assets, setAssets, qa, setQa, brand, setBrand, prefs, setPrefs, draft, setDraft,
-    palette, setPalette, themeV, toast, toasts, saved, setSaved, hasSession,
-  }), [phase, user, tab, stack, projects, assets, qa, brand, prefs, palette, themeV, draft, toasts, saved, hist, hasSession, go, back, reset, replace, project, commit, undo, redo, addProject, removeProject, toast]);
+    palette, setPalette, themeV, toast, toasts, saved, setSaved, hasSession, sessionChecked,
+  }), [phase, user, tab, stack, projects, assets, qa, brand, prefs, palette, themeV, draft, toasts, saved, hist, hasSession, sessionChecked, go, back, reset, replace, project, commit, undo, redo, addProject, removeProject, toast]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
