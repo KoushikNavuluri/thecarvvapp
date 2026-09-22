@@ -38,8 +38,11 @@ export async function signInEmail(email, password) {
 export async function signUpStart(name, email, password) {
   const u = await account.create(ID.unique(), email, password, name);
   // Send the 6-digit email code (matches the mockup's "Check your inbox" step).
-  await account.createEmailToken(u.$id, email).catch(() => null);
-  return u;
+  // If the project doesn't have email OTP enabled this rejects — report it so
+  // the caller can fall back to a direct password session instead of stranding
+  // the user on a code screen that will never receive a code.
+  const codeSent = await account.createEmailToken(u.$id, email).then(() => true).catch(() => false);
+  return { user: u, codeSent };
 }
 export async function verifyEmailCode(userId, secret) {
   await account.createSession(userId, secret);
