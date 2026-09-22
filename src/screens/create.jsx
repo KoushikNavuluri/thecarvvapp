@@ -49,13 +49,14 @@ export function Create() {
   };
 
   /* Real local extraction for text-like files. The text becomes the
-     generation input; the file name stays as the receipt. */
+     generation input; the file name stays as the receipt. NUL bytes are
+     stripped via fromCharCode so the source stays free of raw escapes. */
   const readFile = f => {
     if (!f) return;
     if (f.size > 25 * 1024 * 1024) { toast("That file is over 25 MB", "alert"); return; }
     const r = new FileReader();
     r.onload = () => {
-      const text = String(r.result || "").replace(//g, "").slice(0, 8000).trim();
+      const text = String(r.result || "").split(String.fromCharCode(0)).join("").slice(0, 8000).trim();
       if (!text) { toast("No readable text in that file", "alert"); return; }
       setDraft({ ...draft, input:text, file:f.name });
       setSheet(null);
@@ -88,7 +89,7 @@ export function Create() {
           <textarea ref={ta} rows={focus || draft.input ? 3 : 1} value={draft.input}
             onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
             onChange={e => setDraft({ ...draft, input:e.target.value })}
-            placeholder={focus || draft.input ? "Paste a topic, URL, article or document…" : "Paste a topic, URL or file…"}
+            placeholder={focus || draft.input ? "Paste a topic, URL, article or document\u2026" : "Paste a topic, URL or file\u2026"}
             className={draft.input ? "" : "mono"}
             style={{ resize:"none", fontSize:draft.input ? 15 : 13.5, lineHeight:1.45, paddingTop:focus || draft.input ? 1 : 0, background:"none" }}/>
           {draft.input && <button aria-label="Clear" className="focusable" onClick={() => setDraft({ ...draft, input:"" })} style={{ marginTop:2 }}><Icon n="x" s={15} c={C.mute}/></button>}
@@ -144,7 +145,7 @@ export function Create() {
 
         <div className="noscroll" style={{ display:"flex", gap:6, overflowX:"auto", marginTop:14, paddingBottom:2 }}>
           {SUGGEST.map(s => <Chip key={s} s="sm" onClick={() => setDraft({ ...draft, input:s })}>
-            {s.length > 34 ? s.slice(0, 32).replace(/^https?:\/\//, "") + "…" : s}
+            {s.length > 34 ? s.slice(0, 32).replace(/^https?:\/\//, "") + "\u2026" : s}
           </Chip>)}
         </div>
 
@@ -301,7 +302,7 @@ export function Generating() {
                 <div key={s.k} style={{ marginBottom:12 }}>
                   <div style={{ display:"flex", alignItems:"center", gap:8, color:C.ink }}>
                     {finished ? <Icon n="check" s={13} w={2.4}/> : <Spinner s={12}/>}
-                    <span>{s.title}{finished ? "" : "…"}</span>
+                    <span>{s.title}{finished ? "" : "\u2026"}</span>
                   </div>
                   {s.lines.map((l, li) => {
                     if (si === tick.stage && li >= tick.line && !result) return null;
@@ -330,14 +331,14 @@ export function Generating() {
     </>
   );
 }
-const shorten = (s, n) => s.length > n ? s.slice(0, n).trim() + "…" : s;
+const shorten = (s, n) => s.length > n ? s.slice(0, n).trim() + "\u2026" : s;
 function titleFor(v) {
   if (!v || !v.trim()) return "Untitled story";
   const t = v.replace(/^https?:\/\/(www\.)?/, "").split(/[/?#]/)[0];
   if (/costco/i.test(v)) return "Why Costco's business model works";
   if (/eta\.lbl|data cent|grid|power/i.test(v)) return "The AI power bottleneck";
   if (/signup|funnel/i.test(v)) return "One field, 41% of signups";
-  return v.length > 46 ? v.slice(0, 44).trim() + "…" : (v[0].toUpperCase() + v.slice(1));
+  return v.length > 46 ? v.slice(0, 44).trim() + "\u2026" : (v[0].toUpperCase() + v.slice(1));
 }
 
 /* ---------------------------------------------------------- storyboard */
