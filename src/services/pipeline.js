@@ -6,11 +6,12 @@
    visualPlan()-> layout + asset decisions
    design()    -> slide specifications
    critic()    -> QA findings
-   exportJob() -> rendered files
+   exportJob() -> rendered files (simulated progress helper; the
+                 real renderer lives in services/export.jsx)
    ============================================================ */
 import { PROJECTS } from "../data/projects";
 import { templateOf } from "../data/templates";
-import { fetchAiStory, fetchSource, normalizeStory } from "./ai";
+import { fetchAiStory, fetchSource, fetchSearch, normalizeStory } from "./ai";
 
 export function detectInput(v) {
   const t = (v || "").trim();
@@ -29,35 +30,62 @@ const KNOWN = [
 
 export function stagesFor(kind) {
   const fetchLine = kind === "url"
-    ? ["GET page · 200 OK", "stripped nav, ads, cookie banner", "title, author, date resolved"]
-    : ["query expansion · 6 angles", "42 candidates ranked", "authority + recency filter"];
+    ? ["GET page · live fetch", "stripped nav, ads, cookie banner", "title, author, date resolved"]
+    : kind === "paste"
+      ? ["reading the pasted source", "claims pulled from your text"]
+      : ["live web search", "top sources fetched and stripped", "authority + recency ranked"];
   return [
     { k:"research", title:"Researching your source", icon:"book",
-      lines:[...fetchLine, "14 sources kept", "4 tables, 2 charts detected", "9 statistics extracted"], done:"14 relevant sources" },
+      lines:[...fetchLine, "statistics extracted with receipts"], done:"sources resolved" },
     { k:"story", title:"Finding the story", icon:"spark",
-      lines:["claims clustered by theme", "narrative candidates scored", "hook chosen: the misdirection", "progression checked end to end"], done:"7 key insights" },
+      lines:["claims clustered by theme", "narrative candidates scored", "hook chosen", "progression checked end to end"], done:"key insights found" },
     { k:"visual", title:"Planning visuals", icon:"eye",
-      lines:["statistic → bar chart", "causality → loop diagram", "ratio → comparison", "2 photo opportunities matched"], done:"2 charts · 1 diagram · 3 photos" },
+      lines:["statistic → bar chart", "causality → loop diagram", "ratio → comparison", "photo opportunities matched"], done:"visuals planned" },
     { k:"art", title:"Art directing", icon:"palette",
       lines:["rhythm set: photo, type, data, diagram", "text density per slide assigned", "accent reserved for evidence"], done:"Story structure complete" },
     { k:"design", title:"Designing", icon:"layout",
-      lines:["slide specifications built", "layouts resolved", "type scale + safe areas applied", "critic pass: 4 fixes applied"], done:"slides ready" },
+      lines:["slide specifications built", "layouts resolved", "type scale + safe areas applied", "critic pass applied"], done:"slides ready" },
   ];
 }
 
-/* generateStory(): the real pipeline brain. A URL input is scraped live
-   first; the material then goes to the OpenRouter model (via the Carvv
-   server, so the key never touches the browser). Any failure falls back
-   to the built-in editorial brain, so the studio always delivers. */
+/* generateStory(): the real pipeline brain.
+   - URL input: the page is scraped live and becomes the primary source.
+   - Topic/paragraph input: a real web search runs first; the top pages
+     are scraped and handed to the model as citable material.
+   Everything then goes to the OpenRouter model via the Carvv server,
+   so the key never touches the browser. Any failure falls back to the
+   built-in editorial brain, so the studio always delivers. */
 export async function generateStory(input, opts) {
   const value = (input && input.value) || "";
   try {
-    const source = input.type === "url" ? await fetchSource(value) : null;
+    let source = null;
+    let found = [];
+    if (input.type === "url") {
+      source = await fetchSource(value);
+      if (source) found = [{ publisher:source.site, title:source.title, url:source.url, confidence:"high", got:"Fetched just now" }];
+    } else if (input.type === "topic" || input.type === "paragraph") {
+      const hits = await fetchSearch(value);
+      if (hits && hits.length) {
+        const top = hits.slice(0, 3);
+        const pages = await Promise.all(top.map(h => fetchSource(h.url).catch(() => null)));
+        found = top.map((h, i) => {
+          const pg = pages[i];
+          return pg
+            ? { publisher:pg.site || h.publisher, title:pg.title || h.title, url:pg.url || h.url, confidence:"high", got:"Fetched just now" }
+            : { publisher:h.publisher, title:h.title, url:h.url, confidence:"medium", got:h.snippet ? "Snippet only" : "Listed just now" };
+        });
+        const best = pages.find(Boolean);
+        if (best) source = { title:best.title, site:best.site, url:best.url, text:best.text };
+      }
+    }
     const raw = await fetchAiStory({ inputType: input.type, value,
       options: { slides: opts.slides, auto: opts.auto, platform: opts.platform, style: opts.style, template: opts.template },
-      source });
+      source, sources: found });
     const norm = normalizeStory(raw);
     if (norm) {
+      // Real fetched sources outrank whatever the model claims to have read.
+      if (found.length) norm.sources = found;
+      if (norm.title) norm.aiTitle = norm.title;
       const tpl = templateOf(opts.template);
       if (tpl.beats.length) norm.slides = reshape(norm.slides, tpl);
       return norm;
@@ -194,7 +222,8 @@ export function applyCommand(id, slide, project) {
     case "less": {
       const before = (s.body || "").length;
       if (s.body) s.body = s.body.split(". ").slice(0, 1).join(". ").replace(/\.?$/, ".");
-      if (s.headline.length > 58) s.headline = s.headline.split(/[.:]/)[0] + ".";
+      if ((s.headline || "").length > 58) s.headline = s.headline.split(/[.:]/)[0] + ".";
+      if (s.quote && (s.quote || "").length > 88) s.quote = s.quote.split(". ")[0].replace(/\.?$/, ".");
       return { s, note:`Copy cut from ${before} to ${(s.body || "").length} characters. Meaning kept.` };
     }
     case "premium":
