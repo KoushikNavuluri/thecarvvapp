@@ -105,7 +105,7 @@ export function Projects() {
 }
 
 export function ProjectDetail({ id }) {
-  const { project, go, commit, toast, removeProject, reset } = useApp();
+  const { project, go, commit, toast, removeProject, reset, draft, setDraft } = useApp();
   const p = project(id);
   const [menu, setMenu] = useState(false);
   const [ren, setRen] = useState(null);
@@ -113,6 +113,13 @@ export function ProjectDetail({ id }) {
   if (!p) return <EmptyState title="Not found" body="This project was deleted." action={<Btn onClick={() => reset("projects")}>All projects</Btn>}/>;
   const st = styleOf(p.style), pf = platformOf(p.platform);
   const [tone, label] = STATUS[p.status];
+  /* Generating reads the shared draft; load THIS project's input so a
+     regenerate never runs on whatever happened to be in the box. */
+  const regenerate = () => {
+    setDraft({ ...draft, input:p.input.value, platform:p.platform, style:p.style, template:p.template || "auto",
+      slides:Math.max(3, Math.min(12, p.slides.length || 7)), auto:false, file:null });
+    go("generating");
+  };
   return (
     <>
       <Header title={p.title} sub={`${pf.name} · ${st.name}`} back right={<IconBtn n="dots" label="Menu" onClick={() => setMenu(true)}/>}/>
@@ -130,7 +137,7 @@ export function ProjectDetail({ id }) {
           </>
         ) : (
           <EmptyState icon="pencil" title="Still a draft" body="You saved the idea but never ran the research. Pick it up now?"
-            action={<Btn icon="spark" onClick={() => go("generating")}>Generate the story</Btn>}/>
+            action={<Btn icon="spark" onClick={regenerate}>Generate the story</Btn>}/>
         )}
         <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
           <Tag tone={tone} mono={false}>{label}</Tag>
@@ -179,7 +186,7 @@ export function ProjectDetail({ id }) {
         <div style={{ paddingBottom:12 }}>
           <Row icon="pencil" title="Rename" onClick={() => { setRen(p.title); setMenu(false); }}/>
           <Row icon="palette" title="Change style" onClick={() => { setMenu(false); go("styles"); }}/>
-          <Row icon="refresh" title="Regenerate story" onClick={() => { setMenu(false); go("generating"); }}/>
+          <Row icon="refresh" title="Regenerate story" onClick={() => { setMenu(false); regenerate(); }}/>
           <Row icon="trash" title="Delete project" danger last onClick={() => { setMenu(false); setDel(true); }}/>
         </div>
       </Sheet>
