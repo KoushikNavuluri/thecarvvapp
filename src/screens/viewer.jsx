@@ -7,7 +7,8 @@ import { useApp } from "../lib/store";
 import { Slide } from "../slides/SlideRenderer";
 import { Header } from "./create";
 import { SOURCES, CLAIMS } from "../data/projects";
-import { exportJob, critic } from "../services/pipeline";
+import { critic } from "../services/pipeline";
+import { exportProject } from "../services/export";
 import { score as scoreOf } from "../data/templates";
 
 /* ---------------------------------------------------------- viewer */
@@ -138,16 +139,35 @@ const Block = ({ t, b, hand }) => (
   </div>
 );
 
-/* ---------------------------------------------------------- research */
+/* ---------------------------------------------------------- research
+   Sources arrive in two shapes: legacy ids into the demo SOURCES table
+   (the seeded projects), and inline objects produced by a live fetch
+   (title, publisher, url, confidence). Normalize both into one row. */
+const normalizeSrc = s => {
+  if (typeof s === "string") return SOURCES[s] || null;
+  if (s && typeof s === "object") {
+    return {
+      id: s.id || s.url || s.title || "src",
+      pub: s.publisher || s.pub || "Source",
+      title: s.title || "Untitled",
+      kind: s.kind || (s.url ? "web" : "note"),
+      date: s.date || s.got || "just now",
+      url: s.url || "",
+      conf: s.confidence || s.conf || "medium",
+    };
+  }
+  return null;
+};
 export function Research({ id }) {
   const { project, toast } = useApp();
   const p = project(id);
   const [q, setQ] = useState("");
   const [f, setF] = useState("all");
   const [open, setOpen] = useState(null);
-  const srcs = (p?.sources || []).map(s => SOURCES[s]).filter(Boolean);
-  const claims = Object.values(CLAIMS).filter(c => p?.sources?.includes(c.src));
+  const srcs = (p?.sources || []).map(normalizeSrc).filter(Boolean);
+  const claims = Object.values(CLAIMS).filter(c => (p?.sources || []).includes(c.src));
   const shown = claims.filter(c => (f === "all" || c.conf === f) && (!q || (c.text + c.ev).toLowerCase().includes(q.toLowerCase())));
+  const shownSrcs = srcs.filter(s => (f === "all" || s.conf === f) && (!q || (s.title + s.pub).toLowerCase().includes(q.toLowerCase())));
   return (
     <>
       <Header title="Research & evidence" sub={`${srcs.length} sources · ${claims.length} claims`} back/>
@@ -162,7 +182,7 @@ export function Research({ id }) {
         {!srcs.length && <EmptyState icon="book" title="No research yet" body="This project was written from your input alone. Attach a URL or document and regenerate to build an evidence trail."/>}
         {srcs.length > 0 && <>
           <Eyebrow style={{ margin:"6px 0 4px" }}>Sources</Eyebrow>
-          {srcs.map(s => (
+          {shownSrcs.map(s => (
             <button key={s.id} className="focusable tapf" onClick={() => setOpen(s)} style={{ width:"100%", display:"flex", gap:10, alignItems:"center", padding:"12px 0", borderBottom:`1px solid ${C.hair}`, textAlign:"left" }}>
               <span className="mono" style={{ width:34, height:34, borderRadius:8, background:C.soft, display:"grid", placeItems:"center", fontSize:12, color:C.charcoal, flex:"0 0 auto" }}>
                 {s.kind.slice(0, 3).toUpperCase()}</span>
@@ -173,35 +193,42 @@ export function Research({ id }) {
               <Tag tone={s.conf === "high" ? "ok" : "warn"}>{s.conf}</Tag>
             </button>
           ))}
-          <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", margin:"18px 0 4px" }}>
-            <Eyebrow>Claims</Eyebrow>
-            <span className="mono" style={{ fontSize:12, color:C.body }}>{shown.length} SHOWN</span>
-          </div>
-          {shown.map(c => (
-            <div key={c.id} style={{ border:`1px solid ${C.hair}`, borderRadius:12, padding:13, marginBottom:8 }}>
-              <div style={{ fontSize:14, lineHeight:1.4 }}>{c.text}</div>
-              <div style={{ fontSize:12.5, color:C.body, marginTop:7, lineHeight:1.45 }}>{c.ev}</div>
-              <Rule style={{ margin:"10px 0" }}/>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <Tag tone={c.conf === "high" ? "ok" : "warn"}>{c.conf}</Tag>
-                <span className="mono" style={{ fontSize:12, color:C.body, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{SOURCES[c.src]?.title}</span>
-                <button className="focusable" onClick={() => setOpen(SOURCES[c.src])} aria-label="Open source"><Icon n="arrowR" s={15} c={C.ink}/></button>
-              </div>
-            </div>
-          ))}
-          {!shown.length && <EmptyState icon="search" title="Nothing matches" body="No claim contains that text at this confidence level."
+          {!shownSrcs.length && <EmptyState icon="search" title="Nothing matches" body="No source matches that text at this confidence level."
             action={<Btn variant="secondary" onClick={() => { setQ(""); setF("all"); }}>Clear filters</Btn>}/>}
+          {claims.length > 0 && <>
+            <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", margin:"18px 0 4px" }}>
+              <Eyebrow>Claims</Eyebrow>
+              <span className="mono" style={{ fontSize:12, color:C.body }}>{shown.length} SHOWN</span>
+            </div>
+            {shown.map(c => (
+              <div key={c.id} style={{ border:`1px solid ${C.hair}`, borderRadius:12, padding:13, marginBottom:8 }}>
+                <div style={{ fontSize:14, lineHeight:1.4 }}>{c.text}</div>
+                <div style={{ fontSize:12.5, color:C.body, marginTop:7, lineHeight:1.45 }}>{c.ev}</div>
+                <Rule style={{ margin:"10px 0" }}/>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <Tag tone={c.conf === "high" ? "ok" : "warn"}>{c.conf}</Tag>
+                  <span className="mono" style={{ fontSize:12, color:C.body, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{SOURCES[c.src]?.title}</span>
+                  <button className="focusable" onClick={() => setOpen(SOURCES[c.src])} aria-label="Open source"><Icon n="arrowR" s={15} c={C.ink}/></button>
+                </div>
+              </div>
+            ))}
+            {!shown.length && <EmptyState icon="search" title="Nothing matches" body="No claim contains that text at this confidence level."
+              action={<Btn variant="secondary" onClick={() => { setQ(""); setF("all"); }}>Clear filters</Btn>}/>}
+          </>}
         </>}
       </div>
       <Sheet open={!!open} onClose={() => setOpen(null)} title="Source">
         {open && <div style={{ paddingBottom:18 }}>
           <H s={19} style={{ marginBottom:6 }}>{open.title}</H>
           <div className="mono" style={{ fontSize:12, color:C.body, marginBottom:12 }}>{open.pub.toUpperCase()} · {open.date} · {open.kind.toUpperCase()}</div>
-          <div style={{ background:C.soft, borderRadius:9999, padding:"10px 16px", display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
+          {open.url ? <div style={{ background:C.soft, borderRadius:9999, padding:"10px 16px", display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
             <Icon n="link" s={15} c={C.mute}/>
             <span className="mono" style={{ fontSize:12, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{open.url}</span>
-            <button className="focusable" aria-label="Copy link" onClick={() => toast("Link copied", "copy")}><Icon n="copy" s={14} c={C.charcoal}/></button>
-          </div>
+            <button className="focusable" aria-label="Copy link" onClick={() => {
+              if (navigator.clipboard?.writeText) navigator.clipboard.writeText(open.url).then(() => toast("Link copied", "copy"), () => toast("Copy failed", "alert"));
+              else toast("Copy isn't available in this browser", "alert");
+            }}><Icon n="copy" s={14} c={C.charcoal}/></button>
+          </div> : null}
           {Object.values(CLAIMS).filter(c => c.src === open.id).map(c => (
             <div key={c.id} style={{ padding:"10px 0", borderTop:`1px solid ${C.hair}` }}>
               <div style={{ fontSize:13.5 }}>{c.text}</div>
@@ -219,6 +246,9 @@ export function QA({ id }) {
   const { project, qa, setQa, toast, go } = useApp();
   const p = project(id);
   const [running, setRunning] = useState(false);
+  /* The store seeds demo findings; recompute for THIS project on entry
+     so the panel never shows another story's notes. */
+  useEffect(() => { if (p) setQa(critic(p)); }, [id]);
   const list = qa;
   const groups = ["Content", "Design", "Story", "Platform"];
   const sevTone = s => s === "high" ? "bad" : s === "med" ? "warn" : "soft";
@@ -380,16 +410,20 @@ export function ExportScreen({ id }) {
   const [pct, setPct] = useState(0);
   const [step, setStep] = useState(0);
   const [err, setErr] = useState(null);
-  const tries = useRef(0);
   if (!p) return null;
   const pf = platformOf(p.platform);
-  const run = () => {
+  /* Real render: every slide is drawn off-screen by the same engine the
+     viewer uses, captured, and downloaded. Errors are real and retried. */
+  const run = async () => {
     setState("running"); setPct(0); setStep(0); setErr(null);
-    const willFail = fmt === "pack" && tries.current === 0;
-    tries.current += 1;
-    exportJob(p, fmt, (v, i) => { setPct(v); setStep(i); },
-      () => { setState("done"); commit(p.id, x => ({ ...x, status:"exported", exports:[{ what:`${fmt.toUpperCase()} · ${p.slides.length} slides`, when:"just now", size:"9.4 MB" }, ...x.exports] }), "Exported"); },
-      e => { setState("error"); setErr(e); }, willFail);
+    try {
+      const out = await exportProject(p, fmt, prefs.quality, (v, i) => { setPct(v); setStep(i); });
+      setState("done");
+      commit(p.id, x => ({ ...x, status:"exported", exports:[{ what:`${fmt.toUpperCase()} · ${p.slides.length} slides`, when:"just now", size:out.size }, ...x.exports] }), "Exported");
+    } catch (e) {
+      setState("error");
+      setErr(e?.message || "The renderer failed mid-job.");
+    }
   };
   if (state === "done") return (
     <div style={{ flex:1, minHeight:0, display:"flex", flexDirection:"column", padding:"0 18px calc(18px + env(safe-area-inset-bottom))" }}>
@@ -404,7 +438,7 @@ export function ExportScreen({ id }) {
         </div>
       </div>
       <div style={{ display:"grid", gap:8 }}>
-        <Btn full size="lg" icon="share" onClick={() => toast("Shared to your camera roll", "share")}>Save & share</Btn>
+        <Btn full size="lg" icon="share" onClick={() => toast("The files are in your downloads", "share")}>Save & share</Btn>
         <Btn full variant="secondary" onClick={() => go("project", { id })}>Back to project</Btn>
       </div>
     </div>
