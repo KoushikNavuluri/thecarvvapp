@@ -36,6 +36,7 @@ export function Create() {
   const [focus, setFocus] = useState(false);
   const [sheet, setSheet] = useState(null);
   const ta = useRef(null);
+  const fileRef = useRef(null);
   const det = detectInput(draft.input);
   const st = styleOf(draft.style), pf = platformOf(draft.platform);
   const recents = projects.filter(p => p.slides.length).slice(0, 4);
@@ -45,6 +46,23 @@ export function Create() {
   const start = () => {
     if (!draft.input.trim()) { ta.current?.focus(); toast("Give me something to work with", "pencil"); return; }
     go("generating");
+  };
+
+  /* Real local extraction for text-like files. The text becomes the
+     generation input; the file name stays as the receipt. */
+  const readFile = f => {
+    if (!f) return;
+    if (f.size > 25 * 1024 * 1024) { toast("That file is over 25 MB", "alert"); return; }
+    const r = new FileReader();
+    r.onload = () => {
+      const text = String(r.result || "").replace(//g, "").slice(0, 8000).trim();
+      if (!text) { toast("No readable text in that file", "alert"); return; }
+      setDraft({ ...draft, input:text, file:f.name });
+      setSheet(null);
+      toast("Source loaded from " + f.name, "file");
+    };
+    r.onerror = () => toast("Couldn't read that file", "alert");
+    r.readAsText(f);
   };
 
   return (
@@ -206,11 +224,14 @@ export function Create() {
       </Sheet>
 
       <Sheet open={sheet === "file"} onClose={() => setSheet(null)} title="Add a source">
-        <div style={{ border:`1px dashed ${C.hair2}`, borderRadius:12, padding:"26px 16px", textAlign:"center" }}>
+        <input ref={fileRef} type="file" accept=".txt,.md,.markdown,.csv,.json,.log,text/plain,text/csv,application/json" style={{ display:"none" }}
+          onChange={e => { readFile(e.target.files?.[0]); e.target.value = ""; }}/>
+        <button className="focusable tapf" onClick={() => fileRef.current?.click()}
+          style={{ width:"100%", border:`1px dashed ${C.hair2}`, borderRadius:12, padding:"26px 16px", textAlign:"center" }}>
           <Icon n="file" s={22} c={C.mute}/>
-          <div style={{ fontSize:14, marginTop:8 }}>Drop a PDF, doc or CSV here</div>
+          <div style={{ fontSize:14, marginTop:8 }}>Pick a text file, doc or CSV</div>
           <div className="mono" style={{ fontSize:12, color:C.body, marginTop:4 }}>MAX 25 MB · TEXT IS EXTRACTED LOCALLY</div>
-        </div>
+        </button>
         <div style={{ marginTop:14 }}>
           <Eyebrow style={{ marginBottom:6 }}>Recent files</Eyebrow>
           {["funnel-export-sep.csv", "q4-membership-deck.pdf", "grid-queue-2024.pdf"].map(f => (
@@ -243,11 +264,13 @@ export function Generating() {
   useEffect(() => {
     if (!result) return;
     const id = "np" + Date.now().toString(36).slice(-4);
-    const p = { id, title:titleFor(draft.input), input:{ type:det.type, value:draft.input }, platform:draft.platform,
+    const p = { id, title:result.aiTitle || titleFor(draft.input), input:{ type:det.type, value:draft.input }, platform:draft.platform,
       style:draft.style, template:draft.template, status:"storyboard", cover:result.slides[0]?.asset || null, slides:result.slides,
       deco:{ grain:false, numbers:false, mark:true, radius:1 },
       sources:result.sources, created:"Just now", updated:"just now", score:result.score,
-      versions:[{ v:"v1", when:"just now", what:`First generation · ${result.slides.length} slides` }], exports:[], fresh:!result.matched };
+      versions:[{ v:"v1", when:"just now", what:`First generation · ${result.slides.length} slides` }], exports:[],
+      // "fresh" means thin research: flag it only when no real sources came back.
+      fresh:!(result.sources && result.sources.length) };
     addProject(p);
     const t = setTimeout(() => replace("storyboard", { id }), 600);
     return () => clearTimeout(t);
@@ -309,6 +332,7 @@ export function Generating() {
 }
 const shorten = (s, n) => s.length > n ? s.slice(0, n).trim() + "…" : s;
 function titleFor(v) {
+  if (!v || !v.trim()) return "Untitled story";
   const t = v.replace(/^https?:\/\/(www\.)?/, "").split(/[/?#]/)[0];
   if (/costco/i.test(v)) return "Why Costco's business model works";
   if (/eta\.lbl|data cent|grid|power/i.test(v)) return "The AI power bottleneck";
@@ -318,7 +342,7 @@ function titleFor(v) {
 
 /* ---------------------------------------------------------- storyboard */
 export function Storyboard({ id }) {
-  const { project, commit, go, back, toast, setQa, reset } = useApp();
+  const { project, commit, go, back, toast, setQa, reset, draft, setDraft } = useApp();
   const p = project(id);
   const [menu, setMenu] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -445,7 +469,11 @@ export function Storyboard({ id }) {
       </Sheet>
       <Sheet open={menu?.kind === "project"} onClose={() => setMenu(null)} title="Story">
         <div style={{ paddingBottom:12 }}>
-          <Row icon="refresh" title="Regenerate the whole story" sub="Keeps your input, rebuilds the narrative" onClick={() => { setMenu(null); go("generating"); }}/>
+          <Row icon="refresh" title="Regenerate the whole story" sub="Keeps your input, rebuilds the narrative" onClick={() => {
+            setMenu(null);
+            setDraft({ ...draft, input:p.input.value, platform:p.platform, style:p.style, template:p.template || "auto",
+              slides:Math.max(3, Math.min(12, p.slides.length || 7)), auto:false });
+            go("generating"); }}/>
           <Row icon="book" title="Research & evidence" onClick={() => { setMenu(null); go("research", { id:p.id }); }}/>
           <Row icon="shield" title="Run the critic" onClick={() => { setMenu(null); go("qa", { id:p.id }); }}/>
           <Row icon="eye" title="Preview as published" onClick={() => { setMenu(null); go("viewer", { id:p.id }); }}/>
