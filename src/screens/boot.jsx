@@ -120,7 +120,7 @@ const MapArt = () => (
 const CarouselArt = () => {
   const s = PROJECTS[0].slides;
   return <div className="noscroll" style={{ display:"flex", gap:10, overflowX:"auto", width:"100%", padding:"0 2px" }}>
-    {s.map(x => <Slide key={x.id} slide={x} styleId="editorial" w={128} radius={9}/>)}
+    {s.map(x => <Slide key={x.id} slide={x} styleId="editorial" w={128} radius={8}/>)}
   </div>;
 };
 
