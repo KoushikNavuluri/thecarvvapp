@@ -8,13 +8,19 @@ import { PROJECTS } from "../data/projects";
 import { isConfigured, signInEmail, signUpStart, verifyEmailCode, guestLogin } from "../lib/appwrite";
 
 export function Splash() {
-  const { setPhase, hasSession } = useApp();
+  const { setPhase, hasSession, sessionChecked } = useApp();
   const [step, setStep] = useState(0);
+  const [minDone, setMinDone] = useState(false);
   useEffect(() => {
     const a = setTimeout(() => setStep(1), 700);
-    const b = setTimeout(() => setPhase(hasSession ? "app" : "onboarding"), 2150);
+    const b = setTimeout(() => setMinDone(true), 2150);
     return () => { clearTimeout(a); clearTimeout(b); };
-  }, [setPhase, hasSession]);
+  }, []);
+  // Leave once the intro has played AND the session restore has answered,
+  // so a valid session on a slow network is never routed to onboarding.
+  useEffect(() => {
+    if (minDone && sessionChecked) setPhase(hasSession ? "app" : "onboarding");
+  }, [minDone, sessionChecked, hasSession, setPhase]);
   return (
     <div style={{ position:"absolute", inset:0, background:C.canvas, display:"grid", placeItems:"center" }}>
       <div style={{ display:"grid", justifyItems:"center", gap:14 }}>
@@ -118,6 +124,12 @@ const CarouselArt = () => {
   </div>;
 };
 
+/* Map backend failures to honest copy instead of one generic message. */
+const authErr = (err, fallback) =>
+  err?.code === 429 ? "Too many attempts. Wait a minute and retry."
+  : err?.code === 401 || err?.type === "general_unauthorized_scope" ? fallback
+  : fallback;
+
 export function Auth() {
   const { setPhase, setUser, toast } = useApp();
   const [mode, setMode] = useState("signin"); // signin | create | code
@@ -143,7 +155,7 @@ export function Auth() {
     if (isConfigured) {
       signInEmail(email, pw)
         .then(u => { setBusy(false); enter(u.name || email.split("@")[0], u); })
-        .catch(() => { setBusy(false); setErr({ pw:"That email and password don't match an account." }); });
+        .catch(err => { setBusy(false); setErr({ pw:authErr(err, "That email and password don't match an account.") }); });
       return;
     }
     setTimeout(() => {
@@ -163,7 +175,7 @@ export function Auth() {
     if (isConfigured) {
       signUpStart(name.trim(), email, pw)
         .then(u => { uidRef.current = u.$id; setBusy(false); setMode("code"); setLeft(28); })
-        .catch(() => { setBusy(false); setErr({ email:"Couldn't create it. The email may already have an account." }); });
+        .catch(err => { setBusy(false); setErr({ email:authErr(err, "Couldn't create it. The email may already have an account.") }); });
       return;
     }
     setTimeout(() => { setBusy(false); setMode("code"); setLeft(28); }, 900);
@@ -227,7 +239,9 @@ export function Auth() {
           <Btn full variant="secondary" onClick={() => {
             if (!isConfigured) return enter("Guest");
             setBusy(true);
-            guestLogin().then(u => { setBusy(false); enter("Guest", u); }).catch(() => { setBusy(false); enter("Guest"); });
+            guestLogin()
+              .then(u => { setBusy(false); enter("Guest", u); })
+              .catch(() => { setBusy(false); toast("Guest sign-in is unavailable on this backend", "alert"); });
           }}>Continue as guest</Btn>
           <div style={{ textAlign:"center", fontSize:13, color:C.body }}>
             {mode === "signin" ? "No account yet? " : "Already have one? "}
