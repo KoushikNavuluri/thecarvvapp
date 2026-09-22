@@ -54,6 +54,26 @@ export async function remoteSignOut() {
   await safe(() => account.deleteSession("current"));
 }
 
+/* ---------------------------------------------------------- account ops */
+export async function changePassword(current, next) {
+  if (!isConfigured) return;
+  await account.updatePassword(next, current);
+}
+export async function listSessions() {
+  if (!isConfigured) return null;
+  return safe(async () => (await account.listSessions()).sessions, null);
+}
+export async function revokeSession(sessionId) {
+  if (!isConfigured) return;
+  await account.deleteSession(sessionId);
+}
+/* Self-serve account deletion was removed from recent Appwrite web SDKs.
+   Try it when the SDK still ships it; report honestly when it doesn't. */
+export async function deleteAccount() {
+  if (!isConfigured || typeof account.delete !== "function") return false;
+  return safe(async () => { await account.delete(); return true; }, false);
+}
+
 /* ---------------------------------------------------------- mapping */
 const parse = (s, fb) => { try { return JSON.parse(s); } catch { return fb; } };
 
