@@ -174,7 +174,16 @@ export function Auth() {
     setBusy(true);
     if (isConfigured) {
       signUpStart(name.trim(), email, pw)
-        .then(u => { uidRef.current = u.$id; setBusy(false); setMode("code"); setLeft(28); })
+        .then(({ user: u, codeSent }) => {
+          uidRef.current = u.$id;
+          if (codeSent) { setBusy(false); setMode("code"); setLeft(28); return; }
+          // Email codes aren't enabled on this backend: the account exists,
+          // so sign straight in with the password instead of stranding the
+          // user on a code screen that will never receive a code.
+          signInEmail(email, pw)
+            .then(sess => { setBusy(false); enter(sess.name || name.trim(), sess); })
+            .catch(err2 => { setBusy(false); setErr({ email: authErr(err2, "Account created, but sign-in failed. Try signing in.") }); });
+        })
         .catch(err => { setBusy(false); setErr({ email:authErr(err, "Couldn't create it. The email may already have an account.") }); });
       return;
     }
@@ -231,7 +240,7 @@ export function Auth() {
           </div>
           <div style={{ display:"grid", gap:10 }}>
             {mode === "create" && <Input value={name} onChange={setName} placeholder="Your name" icon="user" error={err.name}/>}
-            <Input value={email} onChange={setEmail} placeholder="Email" icon="globe" error={err.email}/>
+            <Input value={email} onChange={setEmail} placeholder="Email" icon="globe" error={err.email}/>}
             <Input value={pw} onChange={setPw} placeholder={mode === "signin" ? "Password" : "Password (8+)"} type="password" icon="lock" error={err.pw} onEnter={mode === "signin" ? signin : create}/>
           </div>
           <Btn full size="lg" loading={busy} onClick={mode === "signin" ? signin : create}>{mode === "signin" ? "Continue" : "Send me a code"}</Btn>
