@@ -120,7 +120,7 @@ const MapArt = () => (
 const CarouselArt = () => {
   const s = PROJECTS[0].slides;
   return <div className="noscroll" style={{ display:"flex", gap:10, overflowX:"auto", width:"100%", padding:"0 2px" }}>
-    {s.map(x => <Slide key={x.id} slide={x} styleId="editorial" w={128} radius={8}/>)}
+    {s.map(x => <Slide key={x.id} slide={x} styleId="editorial" w={128} radius={9}/>)}
   </div>;
 };
 
@@ -240,7 +240,7 @@ export function Auth() {
           </div>
           <div style={{ display:"grid", gap:10 }}>
             {mode === "create" && <Input value={name} onChange={setName} placeholder="Your name" icon="user" error={err.name}/>}
-            <Input value={email} onChange={setEmail} placeholder="Email" icon="globe" error={err.email}/>}
+            <Input value={email} onChange={setEmail} placeholder="Email" icon="globe" error={err.email}/>
             <Input value={pw} onChange={setPw} placeholder={mode === "signin" ? "Password" : "Password (8+)"} type="password" icon="lock" error={err.pw} onEnter={mode === "signin" ? signin : create}/>
           </div>
           <Btn full size="lg" loading={busy} onClick={mode === "signin" ? signin : create}>{mode === "signin" ? "Continue" : "Send me a code"}</Btn>
