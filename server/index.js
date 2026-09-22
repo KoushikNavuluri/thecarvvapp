@@ -145,44 +145,65 @@ app.get("/api/scrape", rateLimit("scrape", 120, 60_000), async (req, res) => {
     text = text.slice(0, 6000);
     if (text.length < 120) return res.status(422).json({ error: "Could not extract readable content from that page" });
 
-    res.json({ url: parsed.toString(), title, byline, publisher: parsed.hostname.replace(/^www\./, ""), text });
+    const pub = parsed.hostname.replace(/^www\./, "");
+    res.json({ url: parsed.toString(), title, byline, publisher: pub, site: pub, text });
   } catch (e) {
     const status = e.name === "AbortError" ? 504 : (e.status === 429 ? 429 : 502);
     res.status(status).json({ error: status === 504 ? "That page took too long to respond" : status === 429 ? "That site is rate limiting requests." : "Could not fetch that page" });
   }
 });
 
-/* -------- AI: OpenRouter proxy (key stays server-side) -------- */
+/* -------- AI: OpenRouter proxy (key stays server-side) --------
+   Contract with src/services/ai.js:
+     in:  { inputType, value, options:{slides,auto,platform,style,template},
+            source, sources, sourceDocs }
+     out: { title, score, sources:[{publisher,title,url,confidence}],
+            slides:[SlideSpec] }  — the exact shape normalizeStory() validates. */
 app.post("/api/ai/story", rateLimit("ai", 20, 60_000), async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: "OPENROUTER_API_KEY is not configured on the server" });
 
-  const { mode, source, sourceType, style, platform, count, sources } = req.body || {};
-  if (!source || typeof source !== "string") return res.status(400).json({ error: "Missing source" });
+  const { inputType, value, options = {}, source, sources, sourceDocs } = req.body || {};
+  const topic = normSpace(value).slice(0, 600);
 
-  const slideCount = Math.min(10, Math.max(5, Number(count) || 7));
-  const fetched = Array.isArray(sources)
-    ? sources.filter((s) => s && typeof s.text === "string").slice(0, 5)
-        .map((s, i) => `SOURCE ${i + 1}: ${normSpace(s.title)} (${normSpace(s.url)})\n${String(s.text).slice(0, 1800)}`)
-    : [];
+  // Fetched material the model may cite: the primary page plus extra documents.
+  const docs = [];
+  const pushDoc = (d, max) => {
+    if (!d || typeof d.text !== "string" || d.text.length < 80) return;
+    const url = normSpace(d.url).slice(0, 300);
+    if (url && docs.some((x) => x.url === url)) return;
+    docs.push({ title: normSpace(d.title).slice(0, 140), url,
+      publisher: normSpace(d.publisher || d.site).slice(0, 80), text: String(d.text).slice(0, max) });
+  };
+  pushDoc(source, 3500);
+  if (Array.isArray(sourceDocs)) sourceDocs.forEach((d) => { if (docs.length < 4) pushDoc(d, 1800); });
 
-  const system = `You are Carvv's editorial engine. You turn source material into carousel slides for social media.
-Return ONLY valid JSON with this shape:
-{"title": string, "slides": [{"kind": "cover"|"text"|"list"|"steps"|"quote"|"data"|"cta", "headline": string, "sub": string, "body": string, "points": string[], "tag": string}], "caption": string, "hashtags": string[], "sources": [{"title": string, "url": string}], "alt": string[]}
-Rules:
-- Exactly ${slideCount} slides. First slide kind "cover", last slide kind "cta".
-- Tone preset: ${style || "clean"}. Target platform: ${platform || "instagram"}.
-- Headlines <= 9 words. Body <= 40 words. Lists: 3-4 short points.
-- Ground every claim in the provided material; never invent statistics, dates, or quotes.
-- Include a "data" slide only when a real number from the material exists.
-- "sources": list the real materials you used (from SOURCE blocks when provided; otherwise the origin the user gave). Never fabricate links.`;
+  // Search-hit metadata: keeps citations real even for pages that failed to scrape.
+  const hits = (Array.isArray(sources) ? sources : [])
+    .filter((s) => s && (s.title || s.url)).slice(0, 6)
+    .map((s) => ({ title: normSpace(s.title).slice(0, 140), url: normSpace(s.url).slice(0, 300), publisher: normSpace(s.publisher).slice(0, 80) }));
 
-  const user = [
-    mode === "remix" ? "Remix this existing deck into a stronger version." : "Create a new deck from this material.",
-    `Source type: ${sourceType || "text"}.`,
-    fetched.length ? "Fetched source material (use these as the deck's sources):" : "",
-    ...fetched,
-    fetched.length ? "User's topic/notes:" : "Material:",
-    String(source).slice(0, 6000),
+  if (!topic && !docs.length) return res.status(400).json({ error: "Missing source material" });
+
+  const slideCount = Math.min(12, Math.max(3, Number(options.slides) || 7));
+  const styleName = normSpace(options.style) || "editorial";
+  const platformName = normSpace(options.platform) || "instagram";
+
+  const system = [
+    "You are Carvv's editorial engine. You turn researched source material into a social-media carousel: a sequence of slide specifications, never prose.",
+    'Return ONLY valid JSON (no markdown fences, no commentary) with this exact shape:\n{"title": string, "score": number, "sources": [{"publisher": string, "title": string, "url": string, "confidence": "high"|"medium"|"low"}], "slides": [SlideSpec]}',
+    'SlideSpec = {\n"layout": one of "statement" "bar-chart" "line-chart" "comparison" "flywheel" "steps" "timeline" "map" "quote" "photo-hero" "photo-number" "annotated-shot" "closing",\n"purpose": one of "HOOK" "CONTEXT" "EVIDENCE" "EXPLANATION" "EXAMPLE" "INSIGHT" "CONCLUSION",\n"headline": string (max 90 chars; omit for quote slides),\n"body": string (max 220 chars) or null (prefer null),\n"data": chart payload for data layouts, else null. Shapes:\n  bar-chart: {"unit": string, "label": string, "series": [{"l": string, "v": number}]} (3-5 bars)\n  line-chart: {"unit": string, "label": string, "points": [{"l": string, "v": number}]} (3-6 points)\n  comparison: {"unit": string, "rows": [{"l": string, "v": number, "hi": true}]} (exactly 2 rows)\n  steps: {"steps": [{"t": string, "d": string}]} (3-4 steps)\n  timeline: {"items": [{"y": string, "t": string}]} (2-5 items)\n  map: {"flags": [{"n": string, "x": number 0-100, "y": number 0-100}]}\n  flywheel: {"nodes": [string]} (3-4 short labels),\n"quote": quotation text (required for layout "quote"), "who": attribution name, "role": attribution line,\n"big": short stat string like "61%" (only for layout "photo-number"),\n"foot": source credit like "Source: LBNL 2024" or null,\n"annot": one short chart annotation or null,\n"insight": one sentence: the editorial point of this beat,\n"why": one sentence: why this layout carries the point,\n"claims": [],\n"conf": "high" when facts come straight from the material, "medium" when inferred, "low" when generic}',
+    "Rules:\n- Exactly " + slideCount + " slides. Slide 1 purpose \"HOOK\". Last slide purpose \"CONCLUSION\" with layout \"closing\".\n- Every statistic, date and quotation MUST come from the provided material or search results. Never invent numbers, quotes or URLs. If the material has no real number, use no data layout at all.\n- Vary the rhythm: no two adjacent slides share a layout.\n- \"sources\" lists only the provided SOURCE blocks / search results you actually used.\n- Visual style direction: " + styleName + ". Target platform: " + platformName + ".",
+  ].join("\n\n");
+
+  const userMsg = [
+    inputType === "url" ? "The user gave a URL; its fetched page is SOURCE 1."
+      : inputType === "topic" ? "The user gave a topic; live search results and fetched pages follow."
+      : "The user pasted material; treat it as the primary source.",
+    topic ? "Input: " + topic : null,
+    docs.length
+      ? docs.map((d, i) => "SOURCE " + (i + 1) + " [" + (d.publisher || d.url) + "] " + d.title + "\n" + d.url + "\n" + d.text).join("\n\n")
+      : "No page could be fetched; work only from the input text and result metadata, and mark conf accordingly.",
+    hits.length ? "Search results you may cite:\n" + hits.map((h, i) => "RESULT " + (i + 1) + ": " + h.title + " (" + h.publisher + ") " + h.url).join("\n") : null,
   ].filter(Boolean).join("\n\n");
 
   try {
@@ -196,7 +217,7 @@ Rules:
       },
       body: JSON.stringify({
         model: MODEL,
-        messages: [{ role: "system", content: system }, { role: "user", content: user }],
+        messages: [{ role: "system", content: system }, { role: "user", content: userMsg }],
         temperature: 0.7,
         response_format: { type: "json_object" },
       }),
@@ -210,13 +231,15 @@ Rules:
 
     const data = await r.json();
     const content = data?.choices?.[0]?.message?.content || "";
-    let parsedJson;
-    try { parsedJson = JSON.parse(content); } catch {
+    let out;
+    try { out = JSON.parse(content); } catch {
       const m = content.match(/\{[\s\S]*\}/);
-      if (m) { try { parsedJson = JSON.parse(m[0]); } catch { /* fall through */ } }
+      if (m) { try { out = JSON.parse(m[0]); } catch { /* fall through */ } }
     }
-    if (!parsedJson) return res.status(502).json({ error: "Model returned unparseable output" });
-    res.json(parsedJson);
+    if (!out || !Array.isArray(out.slides) || out.slides.length < 3) {
+      return res.status(502).json({ error: "Model returned unparseable output" });
+    }
+    res.json(out);
   } catch (e) {
     res.status(500).json({ error: "AI request failed" });
   }
