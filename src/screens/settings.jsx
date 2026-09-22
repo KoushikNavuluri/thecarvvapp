@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { C, STYLES, styleOf } from "../lib/tokens";
 import { Icon, Mark, Wordmark } from "../lib/icons";
 import { Btn, IconBtn, Body, H, Eyebrow, Chip, Sheet, Dialog, Rule, Note, Tag, Meter, Card, Row, Seg,
@@ -6,7 +6,7 @@ import { Btn, IconBtn, Body, H, Eyebrow, Chip, Sheet, Dialog, Rule, Note, Tag, M
 import { useApp } from "../lib/store";
 import { Slide } from "../slides/SlideRenderer";
 import { Header } from "./create";
-import { remoteSignOut } from "../lib/appwrite";
+import { remoteSignOut, isConfigured, changePassword, listSessions, revokeSession, deleteAccount } from "../lib/appwrite";
 
 export function You() {
   const { user, go, setPhase, setUser, brand, projects, toast } = useApp();
@@ -246,9 +246,61 @@ export function Preferences() {
 }
 
 export function Account() {
-  const { user, toast, setPhase, setUser } = useApp();
+  const { user, toast, setPhase, setUser, projects, assets, brand, prefs } = useApp();
   const [pw, setPw] = useState(false);
   const [del, setDel] = useState(false);
+  const [cur, setCur] = useState("");
+  const [nxt, setNxt] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [sessions, setSessions] = useState(null);
+
+  /* Live session list when the backend is configured; demo rows otherwise. */
+  useEffect(() => {
+    let on = true;
+    listSessions()?.then(s => { if (on && s) setSessions(s); });
+    return () => { on = false; };
+  }, []);
+
+  const savePw = async () => {
+    if (nxt.length < 8) { toast("New password needs 8+ characters", "alert"); return; }
+    if (!isConfigured) { setPw(false); setCur(""); setNxt(""); toast("Password updated", "lock"); return; }
+    setPwBusy(true);
+    try {
+      await changePassword(cur, nxt);
+      setPw(false); setCur(""); setNxt("");
+      toast("Password updated", "lock");
+    } catch (err) {
+      toast(err?.code === 401 ? "Current password didn't match" : "Couldn't update the password", "alert");
+    } finally {
+      setPwBusy(false);
+    }
+  };
+  const revoke = async id => {
+    try {
+      await revokeSession(id);
+      setSessions(s => (s || []).filter(x => x.$id !== id));
+      toast("Session revoked", "logout");
+    } catch {
+      toast("Couldn't revoke that session", "alert");
+    }
+  };
+  const exportData = () => {
+    const dump = { exportedAt:new Date().toISOString(), account:{ name:user?.name || null, email:user?.email || null }, projects, assets, brand, prefs };
+    const blob = new Blob([JSON.stringify(dump, null, 2)], { type:"application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "carvv-export.json";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast("Downloaded carvv-export.json", "download");
+  };
+  const doDelete = async () => {
+    setDel(false);
+    const ok = await deleteAccount();
+    if (ok) { setUser(null); setPhase("auth"); toast("Account deleted", "trash"); }
+    else toast("Self-serve deletion isn't in this SDK build · use the Appwrite console", "info");
+  };
+
   return (
     <>
       <Header title="Account & security" back/>
@@ -256,32 +308,44 @@ export function Account() {
         <Eyebrow style={{ marginBottom:4 }}>Identity</Eyebrow>
         <Row icon="user" title="Name" sub={user?.name || "Guest"} onClick={() => toast("Name editing is in Preferences", "user")}/>
         <Row icon="globe" title="Email" sub={user?.email || "—"} onClick={() => toast("Verification email sent", "globe")}/>
-        <Row icon="lock" title="Password" sub="Last changed 4 months ago" onClick={() => setPw(true)} last/>
+        <Row icon="lock" title="Password" sub={isConfigured ? "Change your password" : "Last changed 4 months ago"} onClick={() => setPw(true)} last/>
         <Eyebrow style={{ margin:"18px 0 4px" }}>Sessions</Eyebrow>
-        {[["iPhone 15 Pro", "This device · Bengaluru", true],["MacBook Pro", "Chrome · 2 days ago", false]].map(([a, b, cur]) => (
-          <div key={a} style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 0", borderBottom:`1px solid ${C.hair}` }}>
-            <Icon n={cur ? "target" : "layout"} s={16} c={C.charcoal}/>
-            <span style={{ flex:1 }}>
-              <span style={{ display:"block", fontSize:14.5 }}>{a}</span>
-              <span style={{ display:"block", fontSize:12.5, color:C.body, marginTop:2 }}>{b}</span>
-            </span>
-            {!cur && <Chip s="sm" onClick={() => toast("Signed out of MacBook Pro", "logout")}>Revoke</Chip>}
-          </div>
-        ))}
+        {sessions
+          ? (sessions.length ? sessions.map(s => (
+              <div key={s.$id} style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 0", borderBottom:`1px solid ${C.hair}` }}>
+                <Icon n={s.current ? "target" : "layout"} s={16} c={C.charcoal}/>
+                <span style={{ flex:1, minWidth:0 }}>
+                  <span style={{ display:"block", fontSize:14.5 }}>{s.clientName || s.deviceName || s.osName || "Unknown client"}</span>
+                  <span style={{ display:"block", fontSize:12.5, color:C.body, marginTop:2 }}>
+                    {s.current ? "This device" : [s.osName, s.ip].filter(Boolean).join(" · ") || "unknown origin"}</span>
+                </span>
+                {!s.current && <Chip s="sm" onClick={() => revoke(s.$id)}>Revoke</Chip>}
+              </div>
+            )) : <Body s={14} style={{ padding:"8px 0 4px" }}>No other sessions.</Body>)
+          : [["iPhone 15 Pro", "This device · Bengaluru", true],["MacBook Pro", "Chrome · 2 days ago", false]].map(([a, b, cur]) => (
+              <div key={a} style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 0", borderBottom:`1px solid ${C.hair}` }}>
+                <Icon n={cur ? "target" : "layout"} s={16} c={C.charcoal}/>
+                <span style={{ flex:1 }}>
+                  <span style={{ display:"block", fontSize:14.5 }}>{a}</span>
+                  <span style={{ display:"block", fontSize:12.5, color:C.body, marginTop:2 }}>{b}</span>
+                </span>
+                {!cur && <Chip s="sm" onClick={() => toast("Signed out of MacBook Pro", "logout")}>Revoke</Chip>}
+              </div>
+            ))}
         <Eyebrow style={{ margin:"18px 0 4px" }}>Data</Eyebrow>
-        <Row icon="download" title="Export my data" sub="Projects, research, assets as JSON" onClick={() => toast("Export queued, you'll get an email", "download")}/>
+        <Row icon="download" title="Export my data" sub="Projects, research, assets as JSON" onClick={exportData}/>
         <Row icon="trash" title="Delete account" sub="Immediate and irreversible" danger last onClick={() => setDel(true)}/>
       </div>
       <Sheet open={pw} onClose={() => setPw(false)} title="Change password"
-        footer={<Btn full onClick={() => { setPw(false); toast("Password updated", "lock"); }}>Update</Btn>}>
+        footer={<Btn full loading={pwBusy} onClick={savePw}>Update</Btn>}>
         <div style={{ display:"grid", gap:10, paddingBottom:10 }}>
-          <Input value="" onChange={() => {}} placeholder="Current password" type="password" icon="lock"/>
-          <Input value="" onChange={() => {}} placeholder="New password (8+)" type="password" icon="lock"/>
+          <Input value={cur} onChange={setCur} placeholder="Current password" type="password" icon="lock" name="current-password"/>
+          <Input value={nxt} onChange={setNxt} placeholder="New password (8+)" type="password" icon="lock" name="new-password"/>
         </div>
       </Sheet>
       <Dialog open={del} onClose={() => setDel(false)} destructive title="Delete your account?" confirm="Delete everything"
         body="Every project, source, asset and export is removed. This cannot be undone."
-        onConfirm={() => { remoteSignOut(); setUser(null); setPhase("auth"); }}/>
+        onConfirm={doDelete}/>
     </>
   );
 }
