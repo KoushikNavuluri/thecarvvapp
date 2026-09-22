@@ -67,8 +67,9 @@ pixel-faithfully: same spacing, typography, colours, states and flow.
 ## Feature tour
 
 - **Research-first pipeline** — paste a topic, a URL, an article or a
-  document. URLs are fetched live and stripped (nav, ads, cookie
-  banners); statistics keep a receipt you can open in the Research panel.
+  document. Topics run a real web search first; the top pages are
+  fetched live and stripped (nav, ads, cookie banners); statistics keep
+  a receipt you can open in the Research panel.
 - **Story shapes** — 9 narrative blueprints (business breakdown, myth vs
   fact, how it works, data story, timeline, ranking, case study,
   quote-led, adaptive). A shape is a constraint, not a skin: it
@@ -89,6 +90,9 @@ pixel-faithfully: same spacing, typography, colours, states and flow.
   on every edit.
 - **Four chrome themes, seven accents** — paper, sand, ink and slate,
   applied app-wide without touching the work.
+- **Real export** — every slide is rendered off-screen by the same
+  engine the viewer uses, then downloaded as PNGs, a single PDF, or a
+  zip package with captions, alt text, sources and the story spec.
 - **Cloud sync** — projects, assets, brand DNA, preferences and palettes
   sync to Appwrite per user, with row-level security.
 
@@ -98,15 +102,16 @@ pixel-faithfully: same spacing, typography, colours, states and flow.
 ┌────────────────────────────┐         ┌──────────────────────────────┐
 │  Client (React 18 + Vite)  │         │  Server (Express, server/)   │
 │                            │  /api   │                              │
-│  screens · slides · lib    ├────────▶│  GET  /api/scrape  (cheerio) │
-│  store (context)           │         │  POST /api/ai/story          │
-│  services/pipeline (local  │         │        │                     │
-│  editorial brain, always   │         └────────┼─────────────────────┘
-│  available as fallback)    │                  ▼
-│                            │         OpenRouter  nvidia/nemotron-3-
-└────────────┬───────────────┘         ultra-550b-a55b:free
-             │ appwrite sdk
-             ▼
+│  screens · slides · lib    ├────────▶│  GET  /api/search  (cheerio) │
+│  store (context)           │         │  GET  /api/scrape  (cheerio) │
+│  services/pipeline (local  │         │  POST /api/ai/story          │
+│  editorial brain, always   │         │  rate limits · security hdrs │
+│  available as fallback)    │         └────────┼─────────────────────┘
+│  services/export (real PNG ├────────┐          ▼
+│  · PDF · zip rendering)    │        │  OpenRouter  nvidia/nemotron-3-
+└────────────┬───────────────┘        │  ultra-550b-a55b:free
+             │ appwrite sdk           │  DuckDuckGo HTML (search,
+             ▼                        │  keyless, server-side)
    Appwrite Cloud project "carvv"
    Auth (email+password, email code, anonymous)
    Database carvv-db: projects · profiles · assets
@@ -120,11 +125,13 @@ Design rules that keep it robust:
 - **Graceful degradation everywhere.** No Appwrite env: the app runs in
   its pixel-identical local demo mode. AI unreachable or slow: the
   built-in editorial pipeline produces the story instead, with zero
-  visual difference. Scraping fails: generation proceeds from the
-  prompt alone.
+  visual difference. Search or scraping fails: generation proceeds from
+  the prompt alone. Export capture fails on fonts: it retries with
+  system fonts rather than dropping the job.
 - **The model edits the specification, never the pixels.** AI output is
   validated and normalized into Carvv's slide spec; invalid chart
-  layouts without real data are downgraded to type slides.
+  layouts without real data are downgraded to type slides. Real fetched
+  sources outrank whatever the model claims to have read.
 
 ## Tech stack
 
@@ -135,7 +142,8 @@ Design rules that keep it robust:
 | Backend platform | Appwrite Cloud (auth, sessions, TablesDB document sync) |
 | AI | OpenRouter, model `nvidia/nemotron-3-ultra-550b-a55b:free` |
 | API server | Node 18+ / Express 4 |
-| Scraping | cheerio over native `fetch` (server-side, UA-rotated, size- and time-capped) |
+| Search + scraping | cheerio over native `fetch` (server-side, timeouts, retries, dedupe) |
+| Export | html-to-image + jsPDF + JSZip, off the live Slide engine |
 | Type | Nunito · Inter · JetBrains Mono · Caveat · Fraunces · Archivo |
 
 ## Project structure
@@ -147,7 +155,7 @@ the-carvv-app/
 ├── package.json                one package, client + server
 ├── .env.example                every variable, documented
 ├── server/
-│   └── index.js                /api/scrape · /api/ai/story · static dist
+│   └── index.js                /api/search · /api/scrape · /api/ai/story · static dist
 ├── src/
 │   ├── main.jsx
 │   ├── App.jsx                 device frame, router, tab bar, toasts
@@ -156,13 +164,14 @@ the-carvv-app/
 │   │   ├── tokens.js           colours, styles, platforms (mutable theme state)
 │   │   ├── theme.js            4 chrome themes, 7 accents, palette maths
 │   │   ├── store.jsx           app state + Appwrite hydration/sync
-│   │   ├── appwrite.js         auth, session restore, document sync
+│   │   ├── appwrite.js         auth, session restore, account ops, document sync
 │   │   ├── icons.jsx           the stroke icon set + the Carvv mark
 │   │   └── ui.jsx              buttons, sheets, dialogs, notes, meters
 │   ├── data/                   seed projects, assets, templates, scoring
 │   ├── services/
 │   │   ├── pipeline.js         the editorial brain (research → story → design)
-│   │   └── ai.js               server API client + slide-spec normalizer
+│   │   ├── ai.js               server API client + slide-spec normalizer
+│   │   └── export.jsx          real PNG / PDF / zip rendering
 │   ├── screens/                boot · create · viewer · editor · library
 │   │                           · studio · share · settings
 │   ├── slides/SlideRenderer.jsx  the 13 layout renderers
@@ -176,8 +185,8 @@ the-carvv-app/
 API key.
 
 ```bash
-git clone https://github.com/KoushikNavuluri/the-carvv-app.git
-cd the-carvv-app
+git clone https://github.com/KoushikNavuluri/thecarvvapp.git
+cd thecarvvapp
 cp .env.example .env      # fill in (below)
 npm install
 npm run dev               # client :5173 · api :8787
@@ -185,6 +194,10 @@ npm run dev               # client :5173 · api :8787
 
 Open http://localhost:5173. On a desktop the app renders in its device
 frame; on a phone it fills the screen.
+
+> Fresh checkout note: run `npm install` (not `npm ci`) once so the
+> lockfile picks up the export libraries, then commit the updated
+> `package-lock.json`.
 
 **Demo mode.** With no env configured the app still runs end to end
 locally: sign in with any email and the password `carvv`, or continue
@@ -194,13 +207,14 @@ as guest. Generation then uses the built-in editorial pipeline.
 
 | Variable | Where | Purpose |
 | --- | --- | --- |
-| `VITE_APPWRITE_ENDPOINT` | client | `https://cloud.appwrite.io/v1` |
+| `VITE_APPWRITE_ENDPOINT` | client | Regional host, e.g. `https://nyc.cloud.appwrite.io/v1` — must match the project's region |
 | `VITE_APPWRITE_PROJECT_ID` | client | the `carvv` project ID |
 | `VITE_APPWRITE_DATABASE_ID` | client | `carvv-db` |
 | `VITE_API_BASE` | client | blank in dev (proxy) or same-origin deploys |
 | `OPENROUTER_API_KEY` | **server only** | your OpenRouter key |
 | `OPENROUTER_MODEL` | server | defaults to `nvidia/nemotron-3-ultra-550b-a55b:free` |
 | `PORT` | server | API port, default `8787` |
+| `ALLOWED_ORIGIN` | server | optional, one extra CORS origin for split-host deploys |
 
 Only `VITE_*` variables reach the browser bundle, and they contain no
 secrets.
@@ -209,12 +223,14 @@ secrets.
 
 The app expects an Appwrite Cloud project named **`carvv`**. A working
 instance is already provisioned as project `6ab22ff00001b59e3839`
-(region nyc) with:
+(region **nyc**) with:
 
 - **Auth**: email/password enabled (default). Sign-up uses a 6-digit
   email code (`createEmailToken` → `createSession`); guests use
-  anonymous sessions. Sessions restore on launch (splash skips straight
-  to the studio).
+  anonymous sessions. Sessions restore on launch (the splash waits for
+  the restore to answer, then skips straight to the studio). Account &
+  security shows the live session list with revoke, and password change
+  calls `updatePassword` directly.
 - **Database `carvv-db`** (TablesDB), row-level security on, table
   permission `create("users")` and per-row owner permissions:
 
@@ -234,7 +250,8 @@ security, register your web platforms, done.
 
 ## AI integration
 
-`POST /api/ai/story` sends the topic (or the scraped source text) to
+`POST /api/ai/story` sends the topic (plus any real fetched material:
+the scraped page, or search hits with their snippets) to
 `nvidia/nemotron-3-ultra-550b-a55b:free` with a strict JSON contract:
 title, sources with confidence, and 3 to 12 slides, each with a purpose
 (HOOK → … → CONCLUSION), a layout, real chart data only when the source
@@ -245,17 +262,31 @@ generation screen's pipeline log reflects the real stages while it runs.
 
 Change models any time via `OPENROUTER_MODEL`; no code changes.
 
-## Data fetching & scraping
+## Data fetching, search & scraping
 
-`GET /api/scrape?url=…` retrieves the page in real time with a
-browser-grade user agent, follows redirects, caps size and time, and
-uses cheerio to strip nav, ads, cookie banners and consent walls. It
-returns structured content: `title`, `site`, `byline`, `published`,
-`description`, clean reading `text` (article/main preferred), word
-count, and up to 8 content `images` (og:image first, tiny icons filtered
-out). The create flow feeds this straight into story generation, which
-is why a URL input produces a sourced, plotted story instead of a
-summary.
+- `GET /api/search?q=…` runs a real web search (DuckDuckGo's keyless
+  HTML endpoint, parsed server-side), normalizes results to
+  `{ title, url, snippet, publisher }`, drops ads and dupes, caps at 8.
+- `GET /api/scrape?url=…` retrieves a page in real time with a
+  browser-grade user agent, retries once on 429/5xx, caps size and time,
+  blocks private/internal hosts, and uses cheerio to strip nav, ads,
+  cookie banners and consent walls. It returns structured content:
+  `title`, `site`, `byline`, `published`, `description`, clean reading
+  `text` (article/main preferred), word count, and up to 8 content
+  `images` (og:image first, tiny icons filtered out).
+
+The create flow chains them: a URL input is scraped directly; a topic
+input is searched, its top results scraped, and the material handed to
+the model as citable sources — which is why a generated story shows real
+receipts in the Research panel instead of invented ones.
+
+## Export
+
+`src/services/export.jsx` renders each slide off a hidden copy of the
+live `Slide` engine (identical output to the viewer), captures PNGs at
+1x/2x/3x, then packages by format: individual PNG downloads, a paged
+PDF, or a zip with slides, caption.txt, alt-text.txt, sources.txt and
+the full story.json.
 
 ## Running in production
 
@@ -265,8 +296,10 @@ npm start           # express serves dist/ + /api on :8787
 ```
 
 One process serves everything, so any Node host works (Render, Railway,
-a VPS, Fly.io). Set the env vars on the host, add the public hostname as
-a web platform in Appwrite, and leave `VITE_API_BASE` empty.
+a VPS, Fly.io). Server dependencies (express, cheerio, dotenv) are real
+`dependencies`, so `--omit=dev` installs work. Set the env vars on the
+host, add the public hostname as a web platform in Appwrite, and leave
+`VITE_API_BASE` empty.
 
 ## Scripts
 
@@ -283,9 +316,10 @@ The product UI is a faithful reproduction of the supplied mockup:
 layout, spacing, type, colour, components, states and responsive
 behavior (device frame on desktop, full-bleed on phones). The only
 intentional differences are invisible from the pixels: auth talks to a
-real backend when configured, generation calls a real model, and the
-sign-in footer reads `SECURED BY APPWRITE` instead of the demo hint when
-backend env vars are present.
+real backend when configured, generation calls a real model through real
+research, export downloads real files, and the sign-in footer reads
+`SECURED BY APPWRITE` instead of the demo hint when backend env vars are
+present.
 
 ---
 
