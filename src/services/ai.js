@@ -1,5 +1,5 @@
 /* ============================================================
-   AI + scraping client. Talks to the Carvv API server, never to
+   AI + data client. Talks to the Carvv API server, never to
    OpenRouter directly: the key stays server-side. Every function
    fails soft (null) so the studio can fall back to its built-in
    demo pipeline with zero visual difference.
@@ -21,17 +21,26 @@ async function req(path, opts = {}, timeoutMs = 30000) {
   }
 }
 
+/* Real web search, via the server. Returns a normalized result list:
+   [{ title, url, snippet, publisher }] or null when unavailable. */
+export async function fetchSearch(query) {
+  const r = await req(`/api/search?q=${encodeURIComponent(query)}`, {}, 15000);
+  return r && Array.isArray(r.results) ? r.results : null;
+}
+
 /* Real-time page fetch + strip, via the server scraper. */
 export function fetchSource(url) {
   return req(`/api/scrape?url=${encodeURIComponent(url)}`, {}, 15000);
 }
 
-/* Story generation through the OpenRouter model, via the server. */
-export function fetchAiStory({ inputType, value, options, source }) {
+/* Story generation through the OpenRouter model, via the server.
+   `source` is a fully scraped page; `sources` are search hits the
+   model must cite instead of its own memory. */
+export function fetchAiStory({ inputType, value, options, source, sources }) {
   return req("/api/ai/story", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ inputType, value, options, source }),
+    body: JSON.stringify({ inputType, value, options, source, sources }),
   }, 65000);
 }
 
