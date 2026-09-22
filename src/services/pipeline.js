@@ -57,12 +57,17 @@ export function stagesFor(kind) {
    built-in editorial brain, so the studio always delivers. */
 export async function generateStory(input, opts) {
   const value = (input && input.value) || "";
+  const pub = (pg, h) => pg?.publisher || pg?.site || h?.publisher || "";
   try {
     let source = null;
     let found = [];
+    let docs = [];
     if (input.type === "url") {
       source = await fetchSource(value);
-      if (source) found = [{ publisher:source.site, title:source.title, url:source.url, confidence:"high", got:"Fetched just now" }];
+      if (source) {
+        found = [{ publisher:pub(source), title:source.title, url:source.url, confidence:"high", got:"Fetched just now" }];
+        docs = [{ title:source.title, url:source.url, publisher:pub(source), text:source.text }];
+      }
     } else if (input.type === "topic" || input.type === "paragraph") {
       const hits = await fetchSearch(value);
       if (hits && hits.length) {
@@ -71,16 +76,17 @@ export async function generateStory(input, opts) {
         found = top.map((h, i) => {
           const pg = pages[i];
           return pg
-            ? { publisher:pg.site || h.publisher, title:pg.title || h.title, url:pg.url || h.url, confidence:"high", got:"Fetched just now" }
+            ? { publisher:pub(pg, h), title:pg.title || h.title, url:pg.url || h.url, confidence:"high", got:"Fetched just now" }
             : { publisher:h.publisher, title:h.title, url:h.url, confidence:"medium", got:h.snippet ? "Snippet only" : "Listed just now" };
         });
+        docs = pages.filter(Boolean).map(pg => ({ title:pg.title, url:pg.url, publisher:pub(pg), text:(pg.text || "").slice(0, 1800) }));
         const best = pages.find(Boolean);
-        if (best) source = { title:best.title, site:best.site, url:best.url, text:best.text };
+        if (best) source = { title:best.title, publisher:pub(best), url:best.url, text:best.text };
       }
     }
     const raw = await fetchAiStory({ inputType: input.type, value,
       options: { slides: opts.slides, auto: opts.auto, platform: opts.platform, style: opts.style, template: opts.template },
-      source, sources: found });
+      source, sources: found, sourceDocs: docs });
     const norm = normalizeStory(raw);
     if (norm) {
       // Real fetched sources outrank whatever the model claims to have read.
