@@ -34,13 +34,14 @@ export function fetchSource(url) {
 }
 
 /* Story generation through the OpenRouter model, via the server.
-   `source` is a fully scraped page; `sources` are search hits the
-   model must cite instead of its own memory. */
-export function fetchAiStory({ inputType, value, options, source, sources }) {
+   `source` is the primary scraped page, `sourceDocs` carries the other
+   fetched page texts, and `sources` are the search hits the model may
+   cite instead of its own memory. */
+export function fetchAiStory({ inputType, value, options, source, sources, sourceDocs }) {
   return req("/api/ai/story", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ inputType, value, options, source, sources }),
+    body: JSON.stringify({ inputType, value, options, source, sources, sourceDocs }),
   }, 65000);
 }
 
